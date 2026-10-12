@@ -37,10 +37,9 @@ import (
 
 ## Example
 
-### WebForms Core in GO with backend framework
+### WebForms Core in Go with `net/http`
 
-To use WebForms Core, first copy the WebForms class file ("webforms.go") in this directory to "webforms" directory in your project. Then create a new View file ("main.go") similar to the one below.
-> Please make sure to replace "{your-project-name}" with project name in the import section.
+The following example uses Go's standard `net/http` package to create a simple web application with WebForms Core.
 
 ```go
 package main
@@ -103,20 +102,98 @@ func handleForm(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-In the upper part of the View file, it is first checked whether the submit button has been clicked or not, if it has been clicked, an instance of the WebForms class is created, then the WebForms methods are called, and then the response method is printed on the screen, and other parts Views are not displayed.
-Please note that if the submit button is not clicked (initial request), the view page will be displayed completely for the requester.
+### How the example works
 
-As you can see, the WebFormsJS script has been added in the header section of the View file above.
+When the page receives a request, the server first checks whether the form has been submitted.
 
-The latest version of the WebFormsJS script is available through the link below.
+If the form has been submitted, the application:
 
-https://github.com/elanatframework/Web_forms/blob/elanat_framework/web-forms.js
+1. Reads the submitted form values.
+2. Creates an instance of the `WebFormsCore` class.
+3. Calls WebForms Core methods to define the required UI changes.
+4. Generates the WebForms Core response with `form.Response()`.
+5. Returns the generated commands to the browser without rendering the initial HTML view again.
 
-### How to work with WebForms Core in GO WebAssembly
+For example:
+
+```go
+form := WebFormsCore.New()
+var InputPlace = WebFormsCore.InputPlace
+
+form.SetFontSize(InputPlace.Tag("form"), fontSize+"px")
+form.SetBackgroundColor(InputPlace.Tag("form"), backgroundColor)
+form.SetDisabled(InputPlace.Name("btn_SetBodyValue"), true)
+
+form.AddTag(InputPlace.Tag("form"), "h3", "p")
+form.SetText(InputPlace.Tag("h3"), "Welcome "+name+"!")
+
+form.Response()
+```
+
+If the form has not been submitted, which is the case for the initial request, the complete HTML document is returned to the requester.
+
+This allows the server to initially return the HTML document and subsequently return WebForms Core commands that WebFormsJS executes against the existing HTML DOM.
+
+### Sending Commands with the Initial HTML
+
+When WebForms Core commands need to be sent together with the initial HTML document, you can use `ExportToHtmlComment(true)` instead of `Response()`.
+
+`ExportToHtmlComment(true)` embeds the generated WebForms Core commands in an HTML comment. WebFormsJS detects these commands when the HTML document is loaded and executes them in the browser.
+
+For example, a Go application using `net/http` can generate WebForms Core commands during the initial page load:
+
+```go
+package main
+
+import (
+	"fmt"
+	"net/http"
+
+	"github.com/webforms-core/go"
+)
+
+func main() {
+	http.Handle("/script/", http.StripPrefix("/script/", http.FileServer(http.Dir("script"))))
+	http.HandleFunc("/", handlePage)
+
+	fmt.Println("Server started at http://localhost:8080")
+	http.ListenAndServe(":8080", nil)
+}
+
+func handlePage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet || r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+
+	form := WebFormsCore.New()
+	form.SetBackgroundColor("<body>", "lightblue")
+
+	html := `<!DOCTYPE html>
+<html>
+<head>
+    <title>WebForms Core</title>
+    <script type="module" src="/script/web-forms.js"></script>
+</head>
+<body>
+    <h1>Hello World!</h1>
+</body>
+</html>`
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, html+form.ExportToHtmlComment(true))
+}
+```
+
+In this case, the generated commands are embedded in the HTML response itself. When WebFormsJS loads, it detects the commands in the HTML comment and executes them against the DOM.
+
+Use `Response()` when returning WebForms Core commands as a response to a request. Use `ExportToHtmlComment(true)` when the commands need to be included directly in the HTML document, such as during the initial page load.
+
+### How to Work with WebForms Core in Go WebAssembly
 
 WebForms Core can be used with Go to create WebAssembly modules that execute methods and generate WebForms Core commands.
 
-The Go `WebForms` class acts as a Commander inside the WebAssembly module. It can generate WebForms Core responses that are executed by the WebFormsJS Executor in the browser.
+The Go `WebForms` class acts as a Commander inside the WebAssembly module. It can generate WebForms Core responses that are processed by the WebFormsJS Executor in the browser.
 
 Go WebAssembly uses the Go WebAssembly runtime provided by `wasm_exec.js`. The Go module can expose methods to JavaScript through the `syscall/js` package.
 
@@ -156,7 +233,7 @@ import (
 
 The following example exports several Go methods to JavaScript.
 
-The `add` method performs a simple calculation, while the `setData` method creates a `WebForms` instance and generates commands that modify the HTML page.
+The `add` method performs a simple calculation, while the `setData` method creates a `WebForms` instance and generates commands that modify the HTML page. The `getHtml` method returns an HTML string that can be inserted into the page.
 
 ```go
 package main
@@ -194,25 +271,31 @@ func getHtml(this js.Value, args []js.Value) interface{} {
 }
 
 func main() {
-    js.Global().Set("add", js.FuncOf(add))
-    js.Global().Set("setData", js.FuncOf(setData))
-    js.Global().Set("getHtml", js.FuncOf(getHtml))
+    addFunc := js.FuncOf(add)
+    setDataFunc := js.FuncOf(setData)
+    getHtmlFunc := js.FuncOf(getHtml)
+
+    js.Global().Set("add", addFunc)
+    js.Global().Set("setData", setDataFunc)
+    js.Global().Set("getHtml", getHtmlFunc)
 
     select {}
 }
 ```
 
-The methods that should be called by WebForms Core must be registered in the JavaScript global scope using `js.Global().Set`.
+The methods that should be called from JavaScript must be registered in the JavaScript global scope using `js.Global().Set`.
 
 For example:
 
 ```go
-js.Global().Set("add", js.FuncOf(add))
+js.Global().Set("add", addFunc)
 ```
 
 makes the Go method available as the JavaScript function `add`.
 
-The `main` function remains running while the WebAssembly module is active. The `select {}` statement prevents the Go runtime from exiting after the functions have been registered.
+The `js.Func` values are retained in local variables within `main`, which remains active while the WebAssembly module is running. This keeps the registered callbacks available for JavaScript calls.
+
+The `select {}` statement prevents the Go program from exiting after the functions have been registered.
 
 #### Building the Go WebAssembly Module
 
@@ -244,9 +327,9 @@ The resulting files can be placed in the WebForms Core application as follows:
     wasm_exec.js
 ```
 
-The `wasm_exec.js` file is the Go WebAssembly runtime. It is required to initialize and execute Go WebAssembly modules in the browser.
+The `wasm_exec.js` file is part of the Go WebAssembly runtime. It is required to initialize and execute Go WebAssembly modules in the browser. Use the `wasm_exec.js` file provided by the Go installation corresponding to the Go version used to build the module.
 
-WebForms Core can automatically load `wasm_exec.js` from the same directory when a Go WebAssembly module is executed.
+WebForms Core can use this runtime when executing a Go WebAssembly module, provided that the application is configured to load it from the specified location.
 
 #### Calling Go WebAssembly from CodeBehind
 
@@ -275,7 +358,7 @@ public partial class WasmGOController : CodeBehindController
 
 The `Fetch.WasmMethod` method calls a Go WebAssembly method and returns its result.
 
-In this example:
+For example:
 
 ```csharp
 Fetch.WasmMethod(
@@ -286,9 +369,9 @@ Fetch.WasmMethod(
 )
 ```
 
-the `add` method inside the Go WebAssembly module is executed with the values `10000` and `3`. Its result is then added to the WebForms Core response.
+calls the `add` method inside the Go WebAssembly module with the values `10000` and `3`. The result is then added to the WebForms Core response.
 
-The `SetWasmEvent` method assigns a Go WebAssembly method to a browser event.
+The `SetWasmEvent` method associates a Go WebAssembly method with a browser event.
 
 For example:
 
@@ -305,7 +388,7 @@ form.SetWasmEvent(
 
 When the `WasmEvent` button is clicked, the `setData` method in the Go WebAssembly module is executed.
 
-The method creates a `WebForms` instance and generates WebForms Core commands that modify the `h3Tag` element.
+The method creates a `WebForms` instance and generates WebForms Core commands that modify the `h3Tag` element. These commands are returned by `form.Response()` for processing by WebFormsJS.
 
 The second `SetWasmEvent` call executes the `getHtml` method and places its returned HTML into the `WasmHtmlOutput` element.
 
@@ -360,7 +443,7 @@ HTML DOM
 
 The Go WebAssembly runtime is initialized through `wasm_exec.js`.
 
-The Go methods are exposed to the browser through the `syscall/js` package, while the WebForms Core `WebForms` class is used to generate UI commands.
+The Go methods are exposed to JavaScript through the `syscall/js` package, while the WebForms Core `WebForms` class is used to generate UI commands.
 
 This allows Go WebAssembly modules to participate in WebForms Core applications without requiring the Go module to implement browser DOM manipulation.
 
